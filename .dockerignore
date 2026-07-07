@@ -1,0 +1,35 @@
+# .dockerignore
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.egg-info/
+
+# Virtual environment — never goes in the image
+# The image builds its own isolated environment
+Scripts/
+Lib/
+Include/
+pyvenv.cfg
+
+# Local scan data — never expose real scan results in an image
+scans/
+
+# Git history
+.git/
+.gitignore
+
+# Local config files
+.env
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# Test artifacts
+.coverage
+htmlcov/

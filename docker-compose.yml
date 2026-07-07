@@ -1,0 +1,78 @@
+# docker-compose.yml
+
+services:
+
+  # ___Production service___
+  # This is what you run with: docker compose up scanner.
+  # Starts uvicorn, serves the API, stays running until you stop it with Ctrl+C or docker compose down.
+  scanner:
+    # Build from the Dockerfile in the current directory
+    build:
+      context: .
+      target: final   # ← explicitly targets the production stage
+
+    # Name the running container for easy reference in docker ps/logs/exec
+    container_name: scanme
+
+    ports:
+      # host_port:container_port
+      # Requests to localhost:8000 on your machine are forwarded to
+      # port 8000 inside the container where uvicorn is listening.
+      - "8000:8000"
+
+    environment:
+      # SCANNER_API_KEY is never baked into the image — it's injected here.
+      # In development, set it in a .env file (see below).
+      # In production, use your cloud provider's secret management.
+      - SCANNER_API_KEY=${SCANNER_API_KEY}
+
+    volumes:
+      # Mount a named volume at /app/scans so scan data persists across
+      # container restarts and image rebuilds. Without this, every time
+      # you restart the container, all scan history is lost.
+      - scan_data:/app/scans
+
+    # Restart policy: restart the container automatically if it crashes,
+    # but not if you manually stop it with docker compose down.
+    restart: unless-stopped
+
+    healthcheck:
+      # This mirrors the Dockerfile HEALTHCHECK — Compose uses it to decide
+      # when the container is ready, separate from Docker's own health tracking.
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+    stdin_open: true
+    tty: true
+
+  # ___Testing service___
+  # This is what you run with: docker compose run --rm scanner-test pytest
+  # Runs the full test suite once and exits. Never deployed, Never restarted.
+  # This service exists to prove your tests pass in the exact same environment as the production service.
+  scanner-test:
+    build:
+      context: .
+      target: test   # ← explicitly targets the test stage
+
+    container_name: scanme-test
+
+    environment:
+      - SCANNER_API_KEY=${SCANNER_API_KEY}
+
+    volumes:
+      - scan_data:/app/scans
+
+    restart: "no"  # never restart the test container
+
+    stdin_open: true
+    tty: true
+    
+# Named volumes are managed by Docker and persist independently of containers.
+# docker compose down does NOT delete volumes — only docker compose down -v does.
+# This means your scan data survives image rebuilds and container restarts.
+volumes:
+  scan_data:
