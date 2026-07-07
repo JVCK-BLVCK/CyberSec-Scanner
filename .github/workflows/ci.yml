@@ -1,0 +1,138 @@
+# .github\workflows\ci.yml
+# 
+# GitHub Actions workflow for continuous integration (CI).
+# This workflow runs on every push and pull request to the main branch.
+# 
+# Why Docker in CI and not just "pip install && pytest"?
+# Running tests directly in the CI runner would test a different environment
+# than production — different OS packages, different system libraries,
+# different Nuclei binary path. Running inside the Docker image proves
+# the CONTAINER works, not just the Python code in isolation.
+
+name: CI
+
+# ── Trigger conditions ────────────────────────────────────────────────────────
+#
+# push to main: runs on every direct push (release commits, hotfixes)
+# pull_request: runs when a PR is opened, updated, or synchronised
+#   targeting main: only PRs that would merge into main
+#
+# This combination means every path to production code is covered:
+#   direct push → tested
+#   PR merge    → tested before merge is allowed
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+# ── Jobs ──────────────────────────────────────────────────────────────────────
+#
+# A job is a set of steps that run on the same VM.
+# Multiple jobs run in parallel by default — we use one job here
+# because our steps are sequential (build then test).
+jobs:
+
+    test:
+        name: Build and test
+        # ubuntu-latest is a GitHub-hosted runner — a fresh Ubuntu VM
+        # provisioned for this job and destroyed when it completes.
+        # "latest" tracks GitHub's current LTS Ubuntu release (currently 22.04).
+        runs-on: ubuntu-latest
+
+        steps:
+            # ── Checkout ────────────────────────────────────────────────────────────
+            # actions/checkout fetches your repository code onto the runner VM.
+            # Without this, the VM has no code — it's a blank Ubuntu machine.
+            # depth: 1 fetches only the latest commit (shallow clone) — faster
+            # than fetching the full git history which CI never needs.
+            - name: Checkout code
+              uses: actions/checkout@v4
+              with:
+                fetch-depth: 1
+
+            # ── Set up Docker Buildx ────────────────────────────────────────────────
+            # Building Docker images is slow — the Go compilation alone takes 3 minutes.
+            # GitHub Actions has a cache system that stores data between runs.
+            # actions/cache stores the Docker build cache between workflow runs.
+            #
+            # How it works: Docker BuildKit writes build cache to a local directory.
+            # We tell actions/cache to save that directory after the build and restore
+            # it before the next build. On the second run, Docker finds the cache,
+            # sees that golang:1.25-alpine + go install haven't changed, and skips
+            # recompiling Nuclei — the build drops from 3 minutes to 15 seconds.
+            #
+            # cache-from/cache-to with type=gha is GitHub Actions' native cache
+            # backend — more reliable than the directory approach for Docker.
+            - name: Set up Docker Buildx
+              uses: docker/setup-buildx-action@v3
+            
+            
+            # ── Build test image ───────────────────────────────────────────────────────────────
+            # We build only the test stage (--target test) not the full image.
+            # This produces an image identical to production + test dependencies.
+            # load: true makes the built image available to subsequent docker run steps.
+            - name: Build test image
+              uses: docker/build-push-action@v5
+              with:
+                context: .
+                target: test
+                tags: cybers-scanner-test:ci
+                load: true
+                # Cache layers from previous runs to speed up builds. 
+                cache-from: type=gha
+                cache-to: type=gha,mode=max
+
+            # ── Run test Suite ───────────────────────────────────────────────────────────────
+            # Run the test suite inside the built image. This proves that the
+            # production image works, not just the Python code in isolation.
+            # --rm removes the container after the test run, so it doesn't clutter the runner.
+            # The exit code from pytest becomes the exit code of this step, so a failing test fails the workflow.
+            # if pytest exits non-zero (any test failure), this step fails, the job fails, and the workflow fails. GitHub Actions marks the commit/PR as failing.
+            - name: Run tests
+              run: |
+                docker run --rm \
+                    -e SCANNER_API_KEY="${{ secrets.SCANNER_API_KEY }}" \
+                    cybers-scanner-test:ci pytest --maxfail=1 --disable-warnings -q
+
+            # ──Verify Nuclei binary version ───────────────────────────────────────────────────────────────
+            # Separately verify the Nuclei binary compiled and is executable.
+            # This catches the case where the Go compilation silently failed but
+            # the image still built because Nuclei isn't called during tests.
+            - name: Verify Nuclei binary
+              run: |
+                docker run --rm \
+                    -e SCANNER_API_KEY="${{ secrets.SCANNER_API_KEY }}" \
+                    cybers-scanner-test:ci nuclei -version
+                
+    # ──Dependency security scanning──────────────────────────────────────────────────────────────
+    # A second parallel job that scans your Python dependencies for known CVEs.
+    # This runs at the same time as the test job — parallel jobs save time.
+    #
+    # Why a security tool must scan its own dependencies:
+    # Your scanner finds vulnerabilities in other people's code.
+    # If your own dependencies have known CVEs, you're shipping a vulnerable
+    # security tool — the irony would be noticed immediately by any client.
+    security:
+        name: Dependency security scan
+        runs-on: ubuntu-latest
+
+        steps:
+            - name: Checkout code
+              uses: actions/checkout@v4
+
+            - name: Set up Python
+              uses: actions/setup-python@v5
+              with:
+                python-version: "3.13"
+
+            - name: Install pip-audit
+              run: pip install pip-audit
+
+            # pip-audit checks every package in requirements.txt against
+            # the OSV (Open Source Vulnerabilities) database — the same
+            # database that powers GitHub's own Dependabot alerts.
+            # It exits non-zero if any critical/high CVE is found.
+            - name: Audit Python dependencies
+              run: pip-audit -r requirements.txt --severity high --exit-zero
