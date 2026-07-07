@@ -135,4 +135,4 @@ jobs:
             # database that powers GitHub's own Dependabot alerts.
             # It exits non-zero if any critical/high CVE is found.
             - name: Audit Python dependencies
-              run: pip-audit -r requirements.txt --severity high --exit-zero
+              run: pip-audit --exit-zero -r requirements.txt --severity high 
