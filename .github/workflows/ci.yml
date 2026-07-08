@@ -128,7 +128,7 @@ jobs:
                 python-version: "3.13"
 
             - name: Install pip-audit
-              run: pip install pip-audit
+              run: pip install --upgrade pip-audit
 
 
             # pip-audit checks every package in requirements.txt against
@@ -136,4 +136,4 @@ jobs:
             # database that powers GitHub's own Dependabot alerts.
             # It exits non-zero if any critical/high CVE is found.
             - name: Audit Python dependencies
-              run: pip-audit -r requirements.txt --severity high 
+              run: pip-audit -r requirements.txt --severity high
