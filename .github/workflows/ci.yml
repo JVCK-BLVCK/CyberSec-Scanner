@@ -127,13 +127,16 @@ jobs:
               with:
                 python-version: "3.13"
 
+            - name: Install project dependencies
+              run: pip install -r requirements.txt
+
             - name: Install pip-audit
-              run: pip install --upgrade pip-audit
+              run: pip install pip-audit
 
 
             # pip-audit checks every package in requirements.txt against
             # the OSV (Open Source Vulnerabilities) database — the same
             # database that powers GitHub's own Dependabot alerts.
             # It exits non-zero if any critical/high CVE is found.
-            - name: Audit Python dependencies
-              run: pip-audit -r requirements.txt --severity high
+            - name: Audit installed packages
+              run: pip-audit
